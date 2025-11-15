@@ -1,55 +1,38 @@
-"""
-Database Helper Functions
-
-MongoDB helper functions ready to use in your backend code.
-Import and use these functions in your API endpoints for database operations.
-"""
-
-from pymongo import MongoClient
-from datetime import datetime, timezone
+# Lightweight Mongo helper matching platform-provided interface
+from typing import Any, Dict, Optional, List
+from datetime import datetime
 import os
-from dotenv import load_dotenv
-from typing import Union
-from pydantic import BaseModel
+from pymongo import MongoClient
 
-# Load environment variables from .env file
-load_dotenv()
+DATABASE_URL = os.environ.get("DATABASE_URL", "mongodb://localhost:27017")
+DATABASE_NAME = os.environ.get("DATABASE_NAME", "appdb")
 
-_client = None
-db = None
+_client: Optional[MongoClient] = None
 
-database_url = os.getenv("DATABASE_URL")
-database_name = os.getenv("DATABASE_NAME")
+def _get_client() -> MongoClient:
+    global _client
+    if _client is None:
+        _client = MongoClient(DATABASE_URL)
+    return _client
 
-if database_url and database_name:
-    _client = MongoClient(database_url)
-    db = _client[database_name]
+@property
+def db():
+    return _get_client()[DATABASE_NAME]
 
-# Helper functions for common database operations
-def create_document(collection_name: str, data: Union[BaseModel, dict]):
-    """Insert a single document with timestamp"""
-    if db is None:
-        raise Exception("Database not available. Check DATABASE_URL and DATABASE_NAME environment variables.")
+# Helper to insert with timestamps
 
-    # Convert Pydantic model to dict if needed
-    if isinstance(data, BaseModel):
-        data_dict = data.model_dump()
-    else:
-        data_dict = data.copy()
-
-    data_dict['created_at'] = datetime.now(timezone.utc)
-    data_dict['updated_at'] = datetime.now(timezone.utc)
-
-    result = db[collection_name].insert_one(data_dict)
+def create_document(collection_name: str, data: Dict[str, Any]) -> str:
+    now = datetime.utcnow()
+    payload = {**data, "created_at": now, "updated_at": now}
+    result = db[collection_name].insert_one(payload)
     return str(result.inserted_id)
 
-def get_documents(collection_name: str, filter_dict: dict = None, limit: int = None):
-    """Get documents from collection"""
-    if db is None:
-        raise Exception("Database not available. Check DATABASE_URL and DATABASE_NAME environment variables.")
-    
-    cursor = db[collection_name].find(filter_dict or {})
-    if limit:
-        cursor = cursor.limit(limit)
-    
-    return list(cursor)
+# Helper to query documents
+
+def get_documents(collection_name: str, filter_dict: Dict[str, Any], limit: int = 50) -> List[Dict[str, Any]]:
+    cursor = db[collection_name].find(filter_dict).limit(limit).sort("created_at", -1)
+    docs = []
+    for d in cursor:
+        d["_id"] = str(d["_id"])  # stringify ObjectId
+        docs.append(d)
+    return docs
